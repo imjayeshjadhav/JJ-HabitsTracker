@@ -76,7 +76,8 @@ export default function AuthScreen () {
                     onChangeText={setPassword}
                 />
 
-                {error  && 
+                {
+                    error  && 
                     <Text style={{color:theme.colors.error}}>{error}</Text>
                 }
 
