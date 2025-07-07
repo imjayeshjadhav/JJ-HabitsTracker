@@ -1,21 +1,44 @@
-import { DATABASE_ID, databases, HABITS_COLLECTION_ID } from "@/lib/appwrite";
+import { client, DATABASE_ID, databases, HABITS_COLLECTION_ID, HABITS_COMPLETIONS_COLLECTION_ID, RealTimeResponse } from "@/lib/appwrite";
 import { useAuth } from "@/lib/auth-context";
-import { Habit } from "@/types/database.type";
+import { Habit, HabitCompletion } from "@/types/database.type";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Link } from "expo-router";
-import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
-import { Query } from "react-native-appwrite";
+import { useEffect, useRef, useState } from "react";
+import { ScrollView, StyleSheet, View } from "react-native";
+import { ID, Query } from "react-native-appwrite";
+import { Swipeable } from "react-native-gesture-handler";
 import { Button, Surface, Text } from "react-native-paper";
 
 export default function Index() {
 
   const {signOut, user} = useAuth()
-
   const [habits, setHabits] = useState<Habit[]>()
+  const [completedHabit, setCompletedHabit] = useState<string[]>()
+
+  const swipeableRefs = useRef<{[key: string]: Swipeable | null}>({})
 
   useEffect(()=>{
-    fetchHabits()
+
+    if (user){
+      const channel = `databases.${DATABASE_ID}.collections.${HABITS_COLLECTION_ID}.documents`
+      const habitsSubscription = client.subscribe(channel,
+        (response :RealTimeResponse) => {
+          if (response.events.includes("databases.*.collections.*.documents.*.create")){
+            fetchHabits()
+          } else if (response.events.includes("databases.*.collections.*.documents.*.update")){
+            fetchHabits()
+          } else if (response.events.includes("databases.*.collections.*.documents.*.delete")){
+            fetchHabits()
+          }
+        }
+      )
+
+      fetchHabits();
+      fetchTodaysCompletion()
+
+      return () =>{
+        habitsSubscription()
+      }
+    }
   },[user])
 
   const fetchHabits = async () =>{
@@ -27,9 +50,86 @@ export default function Index() {
       )
       setHabits(response.documents as Habit[])
     } catch (error) {
-      
+      console.log(error)
     }
   }
+
+  const fetchTodaysCompletion = async () =>{
+
+    if (!user) return;
+    if (!user || completedHabit?.includes(id)) return;
+    try {
+      const today = new Date()
+      today.setHours(0,0,0,0)
+      const response = await databases.listDocuments(
+        DATABASE_ID, 
+        HABITS_COMPLETIONS_COLLECTION_ID,
+        [
+          Query.equal("user_id", user?.$id ?? ""),
+          Query.greaterThanEqual("completed_at",today.toISOString())
+        ]
+      );
+
+      const completions= response.documents as HabitCompletion[]
+      setCompletedHabit(completions.map((c) => c.habit_id))
+    } catch (error) {
+      console.log(error)
+    }
+  }
+
+  const handleDelete = async (id:string) =>{
+    try {
+      await databases.deleteDocument(DATABASE_ID, HABITS_COLLECTION_ID, id)
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  const handleComplete = async (id:string) =>{
+
+    if (!user ||completedHabit?.includes(id)) return;
+    try {
+      const currentDate = new Date().toISOString()
+      await databases.createDocument(DATABASE_ID, HABITS_COMPLETIONS_COLLECTION_ID, ID.unique(),
+        {
+          habit_id :id,
+          user_id: user?.$id,
+          completed_at: currentDate,
+        }
+      );
+      const habit = habits?.find((h)=> h.$id === id)
+      if(!habit) return;
+
+      await databases.updateDocument(DATABASE_ID, HABITS_COLLECTION_ID, id,
+        {
+          streak_count: habit.streak_count+1,
+          last_completed: currentDate
+        }
+      )
+    } catch (error) {
+      console.log(error)
+    }
+  }
+
+  const renderRightActions= () =>(
+    <View style={styles.swipeActionRight}>
+      <MaterialCommunityIcons 
+        name="check-circle-outline"
+        size={32}
+        color={"#fff"}
+      />
+    </View>
+  )
+
+  const renderLeftActions = () =>(
+    <View style={styles.swipeActionLeft}>
+      <MaterialCommunityIcons 
+        name="trash-can-outline"
+        size={32}
+        color={"#fff"}
+      />
+    </View>
+  )
 
   return (
     <View style={styles.container}>
@@ -37,31 +137,51 @@ export default function Index() {
         <Text style={styles.title} variant="headlineSmall">Today's Habits</Text>
         <Button mode="text" onPress={signOut} icon="logout">SignOut</Button>
       </View>
-      {
-        habits?.length ===0 ?(
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>No habits yet. Add your first Habit</Text>
-          </View>
-        ) :(
-          habits?.map((habit,key)=>(
-            <Surface  key={key} style={styles.card}>
-              <View style={styles.cardContent}>
-                <Text style={styles.cardTitle}>{habit.title}</Text>
-                <Text style={styles.cardDesc}>{habit.description}</Text>
-                <View style={styles.cardFooter}>
-                  <View style={styles.streakBadge}>
-                    <MaterialCommunityIcons name="fire" size={18} color={"#ff9800"} />
-                    <Text style={styles.streakText}>{habit.streak_count} day streak</Text>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {
+          habits?.length ===0 ?(
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>No habits yet. Add your first Habit</Text>
+            </View>
+          ) :(
+            habits?.map((habit,key)=>(
+              <Swipeable ref={(ref)=>{
+                  swipeableRefs.current[habit.$id] = ref
+                }} 
+                key={key}
+                overshootLeft={false}
+                overshootRight={false}
+                renderLeftActions={renderLeftActions}
+                renderRightActions={renderRightActions}
+                onSwipeableOpen={(direction) => {
+                  if (direction === "left"){
+                    handleDelete(habit.$id)
+                  } else if (direction==="right"){
+                    handleComplete(habit.$id)
+                  }
+                  swipeableRefs.current[habit.$id]?.close();
+                }}
+              >
+                <Surface  style={styles.card}>
+                  <View style={styles.cardContent}>
+                    <Text style={styles.cardTitle}>{habit.title}</Text>
+                    <Text style={styles.cardDesc}>{habit.description}</Text>
+                    <View style={styles.cardFooter}>
+                      <View style={styles.streakBadge}>
+                        <MaterialCommunityIcons name="fire" size={18} color={"#ff9800"} />
+                        <Text style={styles.streakText}>{habit.streak_count} day streak</Text>
+                      </View>
+                      <View style={styles.frequencyBadge}>
+                        <Text style={styles.frequencyText}>{habit.frequency.charAt(0).toUpperCase() + habit.frequency.slice(1)}</Text>
+                      </View>
+                    </View>
                   </View>
-                  <View style={styles.frequencyBadge}>
-                    <Text style={styles.frequencyText}>{habit.frequency.charAt(0).toUpperCase() + habit.frequency.slice(1)}</Text>
-                  </View>
-                </View>
-              </View>
-            </Surface>
-          ))
-        )
-      }
+                </Surface>
+              </Swipeable>
+            ))
+          )
+        }
+      </ScrollView>
     </View>
   );
 }
@@ -80,6 +200,7 @@ const styles = StyleSheet.create({
   },
   title:{
     fontWeight:"bold",
+    color:"#22223b"
   },
   card:{
     marginBottom:18,
@@ -142,5 +263,25 @@ const styles = StyleSheet.create({
   },
   emptyStateText :{
     color :"#666666"
+  },
+  swipeActionLeft :{
+    justifyContent:"center",
+    alignItems:"flex-start",
+    flex:1,
+    backgroundColor :"#e53935",
+    borderRadius :18,
+    marginBottom:18,
+    marginTop :2,
+    paddingLeft :16
+  },
+  swipeActionRight :{
+    justifyContent:"center",
+    alignItems:"flex-end",
+    flex:1,
+    backgroundColor :"#4caf50",
+    borderRadius :18,
+    marginBottom:18,
+    marginTop :2,
+    paddingRight :16
   }
 })
