@@ -170,7 +170,7 @@ export default function Index() {
                 overshootLeft={false}
                 overshootRight={false}
                 renderLeftActions={renderLeftActions}
-                renderRightActions={()=>renderRightActions(habit.id)}
+                renderRightActions={()=>renderRightActions(habit.$id)}
                 onSwipeableOpen={(direction) => {
                   if (direction === "left"){
                     handleDelete(habit.$id)
