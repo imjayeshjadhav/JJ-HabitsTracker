@@ -47,12 +47,13 @@ export default function AddHabitScreen() {
 
   return (
     <View style={styles.container}>
+      <Text style={styles.title}>Create a new goal</Text>
       <TextInput
         label="Title"
         mode='outlined'
         style={styles.input}
         onChangeText={setTitle}
-    />
+      />
       <TextInput
         label="Description"
         mode='outlined'
@@ -95,5 +96,9 @@ const styles = StyleSheet.create({
     frequencyContainer:{
         marginBottom:24,
     },
-
+    title :{
+      fontWeight:"bold",
+      fontSize:24,
+      marginBottom :12,
+    }
 })
